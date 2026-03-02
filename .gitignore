@@ -1,0 +1,17 @@
+# Entornos virtuales
+venv/
+env/
+
+# Variables de entorno (¡Muy importante!)
+.env
+
+# Archivos de base de datos local
+db.sqlite3
+
+# Archivos cacheados de Python
+__pycache__/
+*.pyc
+
+# Carpeta de React (La subiremos aparte)
+frontend/
+node_modules/
