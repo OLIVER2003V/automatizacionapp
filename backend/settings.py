@@ -111,3 +111,9 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Permite que nuestro frontend en React se comunique sin bloqueos
 CORS_ALLOW_ALL_ORIGINS = True
+
+CORS_ALLOWED_ORIGINS = [
+    "https://automatizacionapp-eu1ds7u62-oliver2003vs-projects.vercel.app",
+    # Si Vercel te dio otro link más corto, puedes agregarlo aquí abajo también:
+    # "https://automatizacionapp.vercel.app", 
+]
