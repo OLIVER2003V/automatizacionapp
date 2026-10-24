@@ -35,8 +35,20 @@ INSTALLED_APPS = [
     # Nuestras apps y librerías
     'turistas',
     'rest_framework',
+    'rest_framework.authtoken',
     'corsheaders',
 ]
+
+# Toda la API exige iniciar sesión. El frontend usa un token; el admin y la API navegable, la sesión.
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.TokenAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+}
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware', # <-- Siempre debe ir arriba
@@ -109,11 +121,15 @@ STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# Permite que nuestro frontend en React se comunique sin bloqueos
-CORS_ALLOW_ALL_ORIGINS = True
-
+# Solo nuestro frontend puede llamar a la API desde el navegador.
+# Se pueden agregar más dominios en Render con CORS_ALLOWED_ORIGINS (separados por coma).
 CORS_ALLOWED_ORIGINS = [
-    "https://automatizacionapp-eu1ds7u62-oliver2003vs-projects.vercel.app",
-    # Si Vercel te dio otro link más corto, puedes agregarlo aquí abajo también:
-    # "https://automatizacionapp.vercel.app", 
+    "https://automatizacionapp.vercel.app",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+] + [o.strip() for o in os.getenv('CORS_ALLOWED_ORIGINS', '').split(',') if o.strip()]
+
+# Los links de cada despliegue de Vercel de este proyecto (cambian en cada deploy)
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https://automatizacionapp(-[a-z0-9-]+)?-oliver2003vs-projects\.vercel\.app$",
 ]

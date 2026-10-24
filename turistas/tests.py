@@ -2,6 +2,7 @@ from datetime import date
 from decimal import Decimal
 from io import BytesIO
 
+from django.contrib.auth.models import User
 from django.test import TestCase
 from openpyxl import load_workbook
 from rest_framework.test import APIClient
@@ -78,9 +79,46 @@ class PreciosTests(TestCase):
         self.assertEqual(self.saldo('Ana'), Decimal('370'))
 
 
+class SeguridadTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        User.objects.create_user('oliver', password='clave-segura-123')
+
+    def test_sin_login_no_hay_acceso(self):
+        viaje = Viaje.objects.create(fecha_salida=date(2026, 11, 1))
+        for url in ['/api/turistas/', '/api/viajes/', '/api/tarifa/', f'/api/exportar-excel/{viaje.id}/logistica/']:
+            self.assertEqual(self.client.get(url).status_code, 401, url)
+        self.assertEqual(self.client.post('/api/procesar-mensaje/', {'mensaje': 'x'}).status_code, 401)
+
+    def test_login_devuelve_token_que_da_acceso(self):
+        r = self.client.post('/api/login/', {'username': 'oliver', 'password': 'clave-segura-123'})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()['usuario'], 'oliver')
+        self.client.credentials(HTTP_AUTHORIZATION=f"Token {r.json()['token']}")
+        self.assertEqual(self.client.get('/api/turistas/').status_code, 200)
+
+    def test_login_con_clave_incorrecta(self):
+        r = self.client.post('/api/login/', {'username': 'oliver', 'password': 'mala'})
+        self.assertEqual(r.status_code, 400)
+
+    def test_logout_invalida_el_token(self):
+        token = self.client.post('/api/login/', {'username': 'oliver', 'password': 'clave-segura-123'}).json()['token']
+        self.client.credentials(HTTP_AUTHORIZATION=f"Token {token}")
+        self.assertEqual(self.client.post('/api/logout/').status_code, 204)
+        self.assertEqual(self.client.get('/api/turistas/').status_code, 401)
+
+    def test_cors_solo_para_nuestro_frontend(self):
+        permitido = 'https://automatizacionapp-eu1ds7u62-oliver2003vs-projects.vercel.app'
+        r = self.client.get('/api/login/', HTTP_ORIGIN=permitido)
+        self.assertEqual(r.headers.get('Access-Control-Allow-Origin'), permitido)
+        r = self.client.get('/api/login/', HTTP_ORIGIN='https://otro-sitio.com')
+        self.assertIsNone(r.headers.get('Access-Control-Allow-Origin'))
+
+
 class ApiTests(TestCase):
     def setUp(self):
         self.client = APIClient()
+        self.client.force_authenticate(User.objects.create_user('oliver'))
         self.viaje = Viaje.objects.create(fecha_salida=date(2026, 11, 1))
 
     def test_crear_grupo_desde_un_mensaje(self):

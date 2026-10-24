@@ -3,6 +3,10 @@ import json
 from google import genai
 
 from rest_framework import viewsets, mixins, status
+from rest_framework.authtoken.models import Token
+from rest_framework.authtoken.views import ObtainAuthToken
+from rest_framework.decorators import api_view
+from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 from rest_framework.response import Response
 
@@ -13,6 +17,22 @@ from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 
 from .models import Tarifa, Viaje, Grupo, Turista
 from .serializers import TarifaSerializer, ViajeSerializer, GrupoSerializer, TuristaSerializer
+
+class LoginView(ObtainAuthToken):
+    """Recibe usuario y contraseña (los mismos del admin) y devuelve el token."""
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        serializer = self.serializer_class(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        user = serializer.validated_data['user']
+        token, _ = Token.objects.get_or_create(user=user)
+        return Response({'token': token.key, 'usuario': user.get_username()})
+
+class LogoutView(APIView):
+    def post(self, request):
+        Token.objects.filter(user=request.user).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 class ViajeViewSet(viewsets.ModelViewSet):
     queryset = Viaje.objects.all().order_by('-fecha_salida')
@@ -112,6 +132,7 @@ class ProcesarMensajeIAView(APIView):
 COLORES_GRUPO = ['C6EFCE', 'BDD7EE', 'FFEB9C', 'F8CBAD', 'D9D2E9', 'B4E5E6', 'FCE4D6', 'E2EFDA', 'DDEBF7', 'EAD1DC']
 
 
+@api_view(['GET'])
 def exportar_excel(request, viaje_id, tipo):
     try:
         viaje = Viaje.objects.get(id=viaje_id)
