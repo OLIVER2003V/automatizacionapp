@@ -152,3 +152,18 @@ class ApiTests(TestCase):
         self.assertEqual([f[2] for f in filas], ['G1', 'G1', 'G1', 'G2', '-', '5 pax'])
         self.assertNotEqual(ws['A5'].fill.fgColor.rgb, ws['A8'].fill.fgColor.rgb)
         self.assertEqual(ws['A5'].fill.fgColor.rgb, ws['I7'].fill.fgColor.rgb)
+
+
+class AsegurarAdminTests(TestCase):
+    def test_crea_y_luego_actualiza_la_clave(self):
+        from unittest import mock
+        from django.core.management import call_command
+        with mock.patch.dict('os.environ', {'DJANGO_SUPERUSER_USERNAME': 'oliver', 'DJANGO_SUPERUSER_PASSWORD': 'primera'}):
+            call_command("asegurar_admin")
+        self.assertTrue(User.objects.get(username='oliver').check_password('primera'))
+        with mock.patch.dict('os.environ', {'DJANGO_SUPERUSER_USERNAME': 'oliver', 'DJANGO_SUPERUSER_PASSWORD': 'nueva'}):
+            call_command('asegurar_admin')
+        oliver = User.objects.get(username='oliver')
+        self.assertTrue(oliver.check_password('nueva'))
+        self.assertTrue(oliver.is_superuser)
+        self.assertEqual(User.objects.count(), 1)
