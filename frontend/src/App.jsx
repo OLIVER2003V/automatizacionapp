@@ -1,8 +1,16 @@
 import { useState, useEffect } from 'react'
 import axios from 'axios'
+import api, { API_URL } from './api'
+import { colorGrupo, bs } from './precios'
+import RevisionIA from './components/RevisionIA'
+import ModalPrecios from './components/ModalPrecios'
 
 function App() {
   // --- ESTADOS ---
+  const [tarifa, setTarifa] = useState(null)
+  const [modalPrecios, setModalPrecios] = useState(false)
+  const [avisos, setAvisos] = useState([])
+
   const [viajes, setViajes] = useState([])
   const [viajeSeleccionado, setViajeSeleccionado] = useState('')
   const [nuevaFecha, setNuevaFecha] = useState('')
@@ -21,21 +29,35 @@ function App() {
   const [climaHorario, setClimaHorario] = useState([])
   const [diaClimaSeleccionado, setDiaClimaSeleccionado] = useState(null)
 
+  // --- AVISOS (reemplazan a los alert) ---
+  const avisar = (texto, tipo = 'ok') => {
+    const id = Date.now() + Math.random()
+    setAvisos(a => [...a, { id, texto, tipo }])
+    setTimeout(() => setAvisos(a => a.filter(x => x.id !== id)), 3500)
+  }
+
   // --- FUNCIONES DE CARGA ---
   const cargarViajes = async () => {
     try {
-      const response = await axios.get('https://automatizacionapp.onrender.com/api/viajes/')
+      const response = await api.get('/viajes/')
       setViajes(response.data)
       if (response.data.length > 0 && !viajeSeleccionado) {
         setViajeSeleccionado(response.data[0].id)
       }
-    } catch (error) { console.error(error) }
+    } catch (error) { console.error(error); avisar("No se pudieron cargar las fechas.", 'error') }
   }
 
   const cargarTuristasBD = async () => {
     try {
-      const response = await axios.get('https://automatizacionapp.onrender.com/api/turistas/')
+      const response = await api.get('/turistas/')
       setTuristasBD(response.data)
+    } catch (error) { console.error(error); avisar("No se pudieron cargar los pasajeros.", 'error') }
+  }
+
+  const cargarTarifa = async () => {
+    try {
+      const response = await api.get('/tarifa/')
+      setTarifa(response.data)
     } catch (error) { console.error(error) }
   }
 
@@ -76,6 +98,7 @@ function App() {
   useEffect(() => {
     cargarViajes()
     cargarTuristasBD()
+    cargarTarifa()
     cargarClima()
   }, [])
 
@@ -100,43 +123,62 @@ function App() {
   const crearViaje = async () => {
     if (!nuevaFecha) return;
     try {
-      await axios.post('https://automatizacionapp.onrender.com/api/viajes/', { fecha_salida: nuevaFecha, destino: 'Jardín de las Delicias' })
-      alert("¡Fecha creada!")
+      const response = await api.post('/viajes/', { fecha_salida: nuevaFecha, destino: 'Jardín de las Delicias' })
+      avisar("¡Fecha creada!")
       setNuevaFecha('')
+      setViajeSeleccionado(response.data.id)
       cargarViajes()
-    } catch (error) { alert("Error al crear el viaje.") }
+    } catch { avisar("Error al crear la fecha. ¿Ya existe?", 'error') }
   }
 
   const procesarMensaje = async () => {
     if (!mensaje) return;
     setCargando(true);
     try {
-      const response = await axios.post('https://automatizacionapp.onrender.com/api/procesar-mensaje/', { mensaje: mensaje });
-      setTuristasIA(response.data);
-    } catch (error) { alert("Error con la IA."); } 
+      const response = await api.post('/procesar-mensaje/', { mensaje: mensaje });
+      const reserva = tarifa?.reserva_sugerida ?? 50
+      setTuristasIA(response.data.map(t => ({ reserva, ...t })));
+    } catch { avisar("La IA no pudo leer el mensaje. Inténtalo de nuevo.", 'error'); }
     finally { setCargando(false); }
   }
 
   const guardarEnBaseDeDatos = async () => {
-    if (!viajeSeleccionado) return alert("Selecciona una fecha de salida arriba.");
+    if (!viajeSeleccionado) return avisar("Selecciona una fecha de salida arriba.", 'error');
     setGuardando(true);
     try {
-      const promesas = turistasIA.map(t => axios.post('https://automatizacionapp.onrender.com/api/turistas/', { ...t, viaje: viajeSeleccionado }));
-      await Promise.all(promesas);
-      alert("¡Guardados correctamente!");
+      // Todo el mensaje se guarda como un grupo (de ahí sale el descuento)
+      await api.post('/grupos/', { viaje: viajeSeleccionado, turistas: turistasIA });
+      avisar(`¡Grupo de ${turistasIA.length} guardado!`);
       setTuristasIA(null); setMensaje('');
       cargarTuristasBD();
-    } catch (error) { alert("Error al guardar."); } 
+      cargarViajes();
+    } catch { avisar("Error al guardar. Revisa los datos.", 'error'); }
     finally { setGuardando(false); }
+  }
+
+  const guardarPrecios = async (datos, aplicarAlViaje) => {
+    try {
+      const response = await api.put('/tarifa/', datos)
+      setTarifa(response.data)
+      if (aplicarAlViaje && viajeActual) {
+        const campos = ['precio_paquete', 'precio_rappel', 'precio_tirolesa', 'descuento_grupo', 'minimo_grupo']
+        await api.patch(`/viajes/${viajeActual.id}/`, Object.fromEntries(campos.map(c => [c, response.data[c]])))
+        cargarTuristasBD()
+      }
+      cargarViajes()
+      setModalPrecios(false)
+      avisar("Precios actualizados")
+    } catch { avisar("Error al guardar los precios.", 'error') }
   }
 
   // --- FUNCIONES CRUD ---
   const eliminarTurista = async (id) => {
     if (!window.confirm("¿Seguro que deseas eliminar a este pasajero?")) return;
     try {
-      await axios.delete(`https://automatizacionapp.onrender.com/api/turistas/${id}/`)
+      await api.delete(`/turistas/${id}/`)
       cargarTuristasBD()
-    } catch (error) { alert("Error al eliminar") }
+      avisar("Pasajero eliminado")
+    } catch { avisar("Error al eliminar", 'error') }
   }
 
   const abrirEdicion = (turista) => {
@@ -146,28 +188,35 @@ function App() {
 
   const guardarEdicion = async () => {
     try {
-      await axios.put(`https://automatizacionapp.onrender.com/api/turistas/${datosEdicion.id}/`, datosEdicion)
+      await api.put(`/turistas/${datosEdicion.id}/`, datosEdicion)
       setModalEdicion(false)
+      // Cambiar a alguien de grupo cambia los saldos de sus compañeros
       cargarTuristasBD()
-      alert("¡Pasajero actualizado!")
-    } catch (error) { alert("Error al actualizar") }
+      avisar("¡Pasajero actualizado!")
+    } catch { avisar("Error al actualizar", 'error') }
   }
 
   // --- LÓGICA DE FILTRADO Y ESTADÍSTICAS ---
-  const turistasFiltrados = turistasBD.filter(t => {
-    const coincideViaje = t.viaje === parseInt(viajeSeleccionado);
-    const coincideBusqueda = t.nombre_completo?.toLowerCase().includes(busqueda.toLowerCase()) || t.ci?.includes(busqueda);
-    return coincideViaje && coincideBusqueda;
-  });
+  const viajeActual = viajes.find(v => v.id === parseInt(viajeSeleccionado));
+  const turistasDelViaje = turistasBD.filter(t => t.viaje === parseInt(viajeSeleccionado));
+
+  // Grupos numerados G1, G2... en orden de llegada (igual que en el Excel)
+  const idsGrupo = [...new Set(turistasDelViaje.map(t => t.grupo).filter(Boolean))].sort((a, b) => a - b);
+  const numeroGrupo = Object.fromEntries(idsGrupo.map((id, i) => [id, i + 1]));
+  const tamanoGrupo = turistasDelViaje.reduce((acc, t) => (t.grupo ? { ...acc, [t.grupo]: (acc[t.grupo] || 0) + 1 } : acc), {});
+
+  const turistasFiltrados = turistasDelViaje
+    .filter(t => t.nombre_completo?.toLowerCase().includes(busqueda.toLowerCase()) || t.ci?.includes(busqueda))
+    .sort((a, b) => (a.grupo ?? Infinity) - (b.grupo ?? Infinity) || a.id - b.id);
 
   const totalPasajeros = turistasFiltrados.length;
   const totalRappel = turistasFiltrados.filter(t => t.hace_rappel).length;
   const totalTirolesa = turistasFiltrados.filter(t => t.hace_tirolesa).length;
   const totalReservasBs = turistasFiltrados.reduce((sum, t) => sum + Number(t.reserva || 0), 0);
+  const totalSaldoBs = turistasFiltrados.reduce((sum, t) => sum + Number(t.saldo || 0), 0);
 
   // --- GENERADOR DE ARCHIVO DE CONTACTOS (VCF) ---
   const descargarContactosVCF = () => {
-    const viajeActual = viajes.find(v => v.id === parseInt(viajeSeleccionado));
     let prefijoTour = 'Tour';
     
     // Convertimos la fecha YYYY-MM-DD a DD/MM/YYYY
@@ -189,7 +238,7 @@ function App() {
     });
 
     if (contador === 0) {
-      alert("No hay celulares personales registrados para exportar.");
+      avisar("No hay celulares personales registrados para exportar.", 'error');
       return;
     }
 
@@ -215,6 +264,9 @@ function App() {
           <h1 className="text-4xl font-extrabold text-green-700 tracking-tight">Jardín de las Delicias</h1>
           <p className="text-gray-500 font-medium mt-1">Panel de Control de Reservas Logísticas</p>
         </div>
+        <button onClick={() => setModalPrecios(true)} disabled={!tarifa} className="mt-4 md:mt-0 bg-white border border-gray-200 shadow-sm px-4 py-2 rounded-xl font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50 transition">
+          💲 Precios
+        </button>
       </div>
 
       <div className="max-w-7xl mx-auto grid grid-cols-1 xl:grid-cols-3 gap-6">
@@ -231,7 +283,15 @@ function App() {
               <option value="">-- Selecciona un viaje --</option>
               {viajes.map(v => <option key={v.id} value={v.id}>{v.fecha_salida}</option>)}
             </select>
-            
+
+            {viajeActual && (
+              <div className="mb-4 text-xs text-gray-600 bg-gray-50 border border-gray-100 rounded-xl p-3 leading-relaxed">
+                <span className="font-bold text-gray-500 uppercase">Precios de esta fecha: </span>
+                Paquete {bs(viajeActual.precio_paquete)} · Rappel {bs(viajeActual.precio_rappel)} · Tirolesa {bs(viajeActual.precio_tirolesa)}
+                {Number(viajeActual.descuento_grupo) > 0 && <> · <span className="text-green-700 font-semibold">−{bs(viajeActual.descuento_grupo)} c/u en grupos de {viajeActual.minimo_grupo}+</span></>}
+              </div>
+            )}
+
             <div className="pt-4 border-t border-gray-100">
               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">Crear Nueva Fecha</label>
               <div className="flex space-x-2">
@@ -254,23 +314,14 @@ function App() {
           </div>
 
           {turistasIA && (
-            <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-2xl shadow-sm border border-orange-200 p-6 animate-fade-in">
-              <h2 className="font-bold text-orange-800 mb-4 flex items-center">⚠️ 3. Revisar y Confirmar ({turistasIA.length})</h2>
-              <div className="space-y-3 mb-4 max-h-60 overflow-y-auto pr-2">
-                {turistasIA.map((t, i) => (
-                  <div key={i} className="bg-white p-3 rounded-xl shadow-sm text-sm border border-orange-100">
-                    <p className="font-bold text-gray-800">{t.nombre_completo}</p>
-                    <div className="flex justify-between text-xs text-gray-600 mt-1">
-                      <span>CI: {t.ci || '-'}</span>
-                      <span>Rappel: {t.hace_rappel?'SÍ':'NO'} | Tiro: {t.hace_tirolesa?'SÍ':'NO'}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <button onClick={guardarEnBaseDeDatos} disabled={guardando} className="w-full bg-orange-500 text-white py-3 rounded-xl font-bold hover:bg-orange-600 shadow-md transition-all">
-                {guardando ? 'Guardando...' : 'Guardar a la Base de Datos'}
-              </button>
-            </div>
+            <RevisionIA
+              turistas={turistasIA}
+              setTuristas={setTuristasIA}
+              precios={viajeActual}
+              guardando={guardando}
+              onGuardar={guardarEnBaseDeDatos}
+              onCancelar={() => setTuristasIA(null)}
+            />
           )}
         </div>
 
@@ -336,7 +387,7 @@ function App() {
             )}
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 flex flex-col justify-center items-center">
               <span className="text-gray-500 text-sm font-bold uppercase tracking-wider">Pasajeros</span>
               <span className="text-3xl font-extrabold text-blue-600 mt-1">{totalPasajeros}</span>
@@ -352,6 +403,10 @@ function App() {
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 flex flex-col justify-center items-center">
               <span className="text-gray-500 text-sm font-bold uppercase tracking-wider">Reservas</span>
               <span className="text-2xl font-extrabold text-green-600 mt-1">{totalReservasBs} <span className="text-sm">Bs</span></span>
+            </div>
+            <div className="col-span-2 md:col-span-1 bg-white rounded-2xl shadow-sm border border-gray-200 p-4 flex flex-col justify-center items-center">
+              <span className="text-gray-500 text-sm font-bold uppercase tracking-wider">Por cobrar</span>
+              <span className="text-2xl font-extrabold text-red-500 mt-1">{totalSaldoBs} <span className="text-sm">Bs</span></span>
             </div>
           </div>
 
@@ -375,14 +430,14 @@ function App() {
                   📇 Archivo Contactos
                 </button>
                 <button 
-                  onClick={() => window.open(`https://automatizacionapp.onrender.com/api/exportar-excel/${viajeSeleccionado}/cobro/`, '_blank')}
+                  onClick={() => window.open(`${API_URL}/api/exportar-excel/${viajeSeleccionado}/cobro/`, '_blank')}
                   disabled={!viajeSeleccionado || turistasFiltrados.length === 0}
                   className="flex-1 md:flex-none bg-blue-100 text-blue-700 font-bold py-2 px-4 rounded-xl hover:bg-blue-200 disabled:opacity-50 text-sm transition shadow-sm"
                 >
                   📄 Excel Cobros
                 </button>
                 <button 
-                  onClick={() => window.open(`https://automatizacionapp.onrender.com/api/exportar-excel/${viajeSeleccionado}/logistica/`, '_blank')}
+                  onClick={() => window.open(`${API_URL}/api/exportar-excel/${viajeSeleccionado}/logistica/`, '_blank')}
                   disabled={!viajeSeleccionado || turistasFiltrados.length === 0}
                   className="flex-1 md:flex-none bg-emerald-100 text-emerald-700 font-bold py-2 px-4 rounded-xl hover:bg-emerald-200 disabled:opacity-50 text-sm transition shadow-sm"
                 >
@@ -395,6 +450,7 @@ function App() {
               <table className="w-full text-left border-collapse whitespace-nowrap">
                 <thead>
                   <tr className="bg-white border-b text-gray-500 text-xs uppercase tracking-wider">
+                    <th className="p-4 font-bold text-center">Grupo</th>
                     <th className="p-4 font-bold">Turista</th>
                     <th className="p-4 font-bold text-center">Actividades</th>
                     <th className="p-4 font-bold">Finanzas</th>
@@ -405,8 +461,17 @@ function App() {
                 <tbody className="text-sm">
                   {turistasFiltrados.map(t => {
                     const tieneAlerta = t.es_vegetariano || (t.condicion_medica && t.condicion_medica.trim() !== '');
+                    const n = numeroGrupo[t.grupo];
+                    const color = n ? colorGrupo(n) : 'transparent';
                     return (
-                      <tr key={t.id} className={`border-b transition-colors hover:bg-gray-50 ${tieneAlerta ? 'bg-red-50/40' : 'bg-white'}`}>
+                      <tr key={t.id} className={`border-b transition-colors hover:bg-gray-50 ${tieneAlerta ? 'bg-red-50/40' : 'bg-white'}`} style={{ boxShadow: `inset 6px 0 0 ${color}` }}>
+                        <td className="p-4 text-center">
+                          {n ? (
+                            <span className="inline-block px-2 py-1 rounded-lg text-xs font-bold text-gray-800" style={{ backgroundColor: color }} title={`${tamanoGrupo[t.grupo]} personas en el grupo`}>
+                              G{n} · {tamanoGrupo[t.grupo]}
+                            </span>
+                          ) : <span className="text-gray-300 text-xs">-</span>}
+                        </td>
                         <td className="p-4">
                           <p className="font-bold text-gray-800">{t.nombre_completo}</p>
                           <p className="text-xs text-gray-500">CI: {t.ci || '-'} | Cel: {t.celular || '-'}</p>
@@ -422,6 +487,7 @@ function App() {
 
                         <td className="p-4">
                           <p className="text-xs"><span className="text-gray-500">Res:</span> <strong className="text-green-600">{t.reserva}</strong></p>
+                          {Number(t.descuento) > 0 && <p className="text-xs"><span className="text-gray-500">Desc:</span> <strong className="text-emerald-700">−{t.descuento}</strong></p>}
                           <p className="text-xs"><span className="text-gray-500">Sal:</span> <strong className="text-red-500">{t.saldo}</strong></p>
                         </td>
 
@@ -444,7 +510,7 @@ function App() {
                     );
                   })}
                   {turistasFiltrados.length === 0 && (
-                    <tr><td colSpan="5" className="p-8 text-center text-gray-400">No hay pasajeros para mostrar.</td></tr>
+                    <tr><td colSpan="6" className="p-8 text-center text-gray-400">No hay pasajeros para mostrar.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -463,9 +529,20 @@ function App() {
               <div className="space-y-4">
                 <div>
                   <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Viaje (Cambiar de fecha)</label>
-                  <select className="w-full border-gray-300 border p-2.5 rounded-xl bg-gray-50 focus:ring-2 focus:ring-blue-500 outline-none" value={datosEdicion.viaje} onChange={e => setDatosEdicion({...datosEdicion, viaje: e.target.value})}>
+                  <select className="w-full border-gray-300 border p-2.5 rounded-xl bg-gray-50 focus:ring-2 focus:ring-blue-500 outline-none" value={datosEdicion.viaje} onChange={e => setDatosEdicion({...datosEdicion, viaje: Number(e.target.value), grupo: null})}>
                     {viajes.map(v => <option key={v.id} value={v.id}>{v.fecha_salida}</option>)}
                   </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Grupo</label>
+                  <select className="w-full border-gray-300 border p-2.5 rounded-xl bg-gray-50 focus:ring-2 focus:ring-blue-500 outline-none" value={datosEdicion.grupo ?? ''} onChange={e => setDatosEdicion({...datosEdicion, grupo: e.target.value ? Number(e.target.value) : null})}>
+                    <option value="">Sin grupo (va solo)</option>
+                    {[...new Set(turistasBD.filter(t => t.viaje === Number(datosEdicion.viaje) && t.grupo).map(t => t.grupo))].sort((a, b) => a - b).map((g, i) => {
+                      const nombres = turistasBD.filter(t => t.grupo === g).map(t => t.nombre_completo.split(' ')[0]).join(', ')
+                      return <option key={g} value={g}>G{i + 1}: {nombres}</option>
+                    })}
+                  </select>
+                  <p className="text-[11px] text-gray-400 mt-1">Al cambiar de grupo se recalcula el descuento de todos.</p>
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nombre Completo</label>
@@ -530,6 +607,19 @@ function App() {
           </div>
         </div>
       )}
+
+      {modalPrecios && tarifa && (
+        <ModalPrecios tarifa={tarifa} viaje={viajeActual} onGuardar={guardarPrecios} onCerrar={() => setModalPrecios(false)} />
+      )}
+
+      {/* AVISOS */}
+      <div className="fixed bottom-4 right-4 left-4 sm:left-auto z-[60] space-y-2" aria-live="polite">
+        {avisos.map(a => (
+          <div key={a.id} className={`px-4 py-3 rounded-xl shadow-lg font-semibold text-sm text-white ${a.tipo === 'error' ? 'bg-red-600' : 'bg-gray-900'}`}>
+            {a.tipo === 'error' ? '⚠️ ' : '✅ '}{a.texto}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
